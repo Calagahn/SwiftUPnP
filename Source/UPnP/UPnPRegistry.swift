@@ -117,7 +117,8 @@ public class UPnPRegistry {
         discoveryEngine.stopDiscovery()
     }
     
-    public func searchRequest() {
+    public func refreshDiscovery() {
+        devices.removeAll()
         discoveryEngine.searchRequest()
     }
 
