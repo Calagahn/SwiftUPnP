@@ -117,6 +117,10 @@ public class UPnPRegistry {
         discoveryEngine.stopDiscovery()
     }
     
+    public func searchRequest() {
+        discoveryEngine.searchRequest()
+    }
+
     @MainActor
     internal func startHTTPServerIfNotRunning() {
         guard !httpServer.operating else { return }
