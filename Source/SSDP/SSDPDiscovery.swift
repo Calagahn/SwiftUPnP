@@ -59,7 +59,7 @@ class SSDPDiscovery: NSObject {
             let usnComponents = usnRawValue.components(separatedBy: "::")
             if usnComponents.count == 2,
                let locationString = headers["location"],
-               let locationURL = URL(string: locationString),
+               let locationURL = URL(string: locationString.contains("http") ? locationString : "http://\(locationString)"),
                /// NT = Notification Type - SSDP discovered from device advertisements
                /// ST = Search Target - SSDP discovered as a result of using M-SEARCH requests
                 let ssdpType = (headers["st"] != nil ? headers["st"] : headers["nt"]) {
