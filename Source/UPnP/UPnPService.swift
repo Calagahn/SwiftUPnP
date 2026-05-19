@@ -72,25 +72,33 @@ public class UPnPService: Equatable, Identifiable, Hashable, @unchecked Sendable
             .eraseToAnyPublisher()
     }()
     private var subscriptionId: String?
+
     @MainActor
     public private(set) var subscriptionStatus = SubscriptionStatus.unsubscribed
+
+    // Callbacks for subscription status changes, these are called on the main thread
+    public var onSubscriptionRenewed: (() -> Void)?
+
     @MainActor
     private func setSubcriptionStatus(_ subscriptionStatus: SubscriptionStatus, subscriptionId: String?) {
         self.subscriptionStatus = subscriptionStatus
         self.subscriptionId = subscriptionId
     }
+
     @MainActor
     private func startSubcribing() -> Bool {
         guard subscriptionStatus == .unsubscribed || subscriptionStatus == .failed else { return false }
         subscriptionStatus = .subscribing
         return true
     }
+
     @MainActor
     private func startRenewing() -> String? {
         guard subscriptionStatus == .subscribed, subscriptionId != nil else { return nil }
         subscriptionStatus = .renewing
         return subscriptionId
     }
+
     @MainActor
     private func startUnubcribing() -> Bool {
         guard subscriptionStatus == .subscribed, subscriptionId != nil else { return false }
@@ -279,6 +287,7 @@ public class UPnPService: Equatable, Identifiable, Hashable, @unchecked Sendable
                 
                 Logger.swiftUPnP.debug("Successfully \(type) for: \(timeout) seconds sid: \(subscriptionId)")
                 await self.setSubcriptionStatus(.subscribed, subscriptionId: subscriptionId)
+                await MainActor.run { self.onSubscriptionRenewed?() }
             }
         }
     }
