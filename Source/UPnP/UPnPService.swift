@@ -77,7 +77,8 @@ public class UPnPService: Equatable, Identifiable, Hashable, @unchecked Sendable
     public private(set) var subscriptionStatus = SubscriptionStatus.unsubscribed
 
     // Callbacks for subscription status changes, these are called on the main thread
-    public var onSubscriptionRenewed: (() -> Void)?
+    public var onSubscribed: (() -> Void)?
+    public var onRenewed: (() -> Void)?
 
     @MainActor
     private func setSubcriptionStatus(_ subscriptionStatus: SubscriptionStatus, subscriptionId: String?) {
@@ -287,7 +288,12 @@ public class UPnPService: Equatable, Identifiable, Hashable, @unchecked Sendable
                 
                 Logger.swiftUPnP.debug("Successfully \(type) for: \(timeout) seconds sid: \(subscriptionId)")
                 await self.setSubcriptionStatus(.subscribed, subscriptionId: subscriptionId)
-                await MainActor.run { self.onSubscriptionRenewed?() }
+                await self.setSubcriptionStatus(.subscribed, subscriptionId: subscriptionId)
+                if type == "renewed" {
+                    await MainActor.run { self.onRenewed?() }
+                } else {
+                    await MainActor.run { self.onSubscribed?() }
+                }
             }
         }
     }
