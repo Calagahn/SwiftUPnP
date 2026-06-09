@@ -66,15 +66,21 @@ public class UPnPRegistry {
     }
     
     private var httpServer: HttpServer
-    private let httpServerPort: UInt16
+    private var httpServerPort: UInt16
+    private let httpServerPortRange: Range<UInt16>
     private let eventCallBackPath = "/Event/\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
     internal var eventCallbackUrl: URL?
+    @MainActor
+    internal var currentEventCallbackUrl: URL? {
+        eventCallbackUrl
+    }
     private let eventSubject = PassthroughSubject<(String, Data), Never>()
     internal lazy var eventPublisher: AnyPublisher<(String, Data), Never> = {
         eventSubject.share().eraseToAnyPublisher()
     }()
     
     init(httpServerPortRange: Range<UInt16> = 51000..<51099) {
+        self.httpServerPortRange = httpServerPortRange
         httpServerPort = IPHelper.freePortFromRange(range: httpServerPortRange)
         httpServer = HttpServer()
         httpServer[eventCallBackPath] = { [weak self] request in
@@ -124,16 +130,17 @@ public class UPnPRegistry {
     }
 
     @MainActor
-    internal func startHTTPServerIfNotRunning() {
-        guard !httpServer.operating else { return }
-        startHTTPServer()
+    @discardableResult
+    internal func startHTTPServerIfNotRunning() -> Bool {
+        if httpServer.operating { return true }
+        return startHTTPServer()
     }
-        
+
     @MainActor
-    internal func startHTTPServer() {
+    @discardableResult
+    internal func startHTTPServer() -> Bool {
         do {
             try httpServer.start(httpServerPort)
-            
             eventCallbackUrl = callbackUrl()
             if let eventCallbackUrl = eventCallbackUrl {
                 for device in devices {
@@ -142,13 +149,26 @@ public class UPnPRegistry {
                     }
                 }
             }
-        }
-        catch {
+            return true
+        } catch {
             Logger.swiftUPnP.error("Couldn't start http server on port \(self.httpServerPort)")
             Logger.swiftUPnP.error("\(error.localizedDescription)")
+            return false
         }
     }
-    
+
+    @MainActor
+    @discardableResult
+    internal func ensureHTTPServerRunning(maxAttempts: Int = 5) -> Bool {
+        if httpServer.operating { return true }
+        for _ in 0..<maxAttempts {
+            if startHTTPServer() { return true }
+            httpServerPort = IPHelper.freePortFromRange(range: httpServerPortRange)
+        }
+        Logger.swiftUPnP.error("HTTP server failed to start after \(maxAttempts) attempts")
+        return false
+    }
+
     @MainActor
     private func stopHTTPServer() {
         guard httpServer.operating else { return }

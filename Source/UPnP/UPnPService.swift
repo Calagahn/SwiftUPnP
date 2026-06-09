@@ -230,7 +230,15 @@ public class UPnPService: Equatable, Identifiable, Hashable, @unchecked Sendable
     }
     
     public func subscribeToEvents() async {
-        guard let eventUrl = eventUrl, let eventCallbackUrl = eventCallbackUrl else { return }
+        guard let eventUrl = eventUrl else { return }
+        guard await UPnPRegistry.shared.ensureHTTPServerRunning() else {
+            Logger.swiftUPnP.error("subscribe aborted: HTTP server not running")
+            return
+        }
+        // Reread the updated callback, as the port might have changed during `ensureHTTPServerRunning`.
+        guard let eventCallbackUrl = await UPnPRegistry.shared.currentEventCallbackUrl else { return }
+        self.eventCallbackUrl = eventCallbackUrl
+
         guard await startSubcribing() else { return }
         
         var request = URLRequest(url: eventUrl)
@@ -256,7 +264,13 @@ public class UPnPService: Equatable, Identifiable, Hashable, @unchecked Sendable
     }
     
     private func subscribeOrRenew(request: URLRequest, type: String) async {
-        await UPnPRegistry.shared.startHTTPServerIfNotRunning()
+        // The server is guaranteed to be running by the caller (subscribeToEvents).
+        // In case of renewal, we still ensure it's running without changing the port.
+        guard await UPnPRegistry.shared.startHTTPServerIfNotRunning() else {
+            Logger.swiftUPnP.error("\(type) aborted: HTTP server not running")
+            await self.setSubcriptionStatus(.failed, subscriptionId: nil)
+            return
+        }
         
         guard let (_, response) = try? await URLSession.shared.data(for: request) else {
             Logger.swiftUPnP.error("\(type) failed request \(request.url!.description)")
