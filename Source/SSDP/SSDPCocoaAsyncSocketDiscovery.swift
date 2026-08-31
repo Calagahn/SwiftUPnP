@@ -30,11 +30,22 @@ import CocoaAsyncSocket
 import os.log
 
 class SSDPCocoaAsyncSocketDiscovery: SSDPDiscovery {
+    /// Socket joined to the SSDP multicast group on port 1900, used to receive
+    /// device advertisements (NOTIFY ssdp:alive / ssdp:byebye).
     private var multicastSocket: GCDAsyncUdpSocket?
-    
+
+    /// Socket bound to an ephemeral port, used to send M-SEARCH requests and to
+    /// receive the unicast search responses (200 OK). Because M-SEARCH is sent
+    /// from this socket, its ephemeral port becomes the source port, and compliant
+    /// devices reply to that source port. Some devices (e.g. Asset UPnP media server)
+    /// reply to a port of their own choosing rather than 1900; sending from a dedicated
+    /// ephemeral socket and receiving on it captures those responses as well.
+    private var searchSocket: GCDAsyncUdpSocket?
+
     func startDiscovery(forTypes types: [String]) throws {
         guard multicastSocket == nil else { throw UPnPError.alreadyConnected }
-        
+
+        // Multicast listening socket: receives NOTIFY advertisements on port 1900.
         let multicastSocket = GCDAsyncUdpSocket(delegate: self, delegateQueue: DispatchQueue.main)
         multicastSocket.setIPv4Enabled(true)
         multicastSocket.setIPv6Enabled(true)
@@ -45,24 +56,41 @@ class SSDPCocoaAsyncSocketDiscovery: SSDPDiscovery {
         try multicastSocket.joinMulticastGroup(multicastGroupAddress)
         try multicastSocket.beginReceiving()
 
+        // Search socket: sends M-SEARCH from an OS-assigned ephemeral port and
+        // receives the unicast responses. beginReceiving() is required so that
+        // incoming responses are delivered to the delegate.
+        let searchSocket = GCDAsyncUdpSocket(delegate: self, delegateQueue: DispatchQueue.main)
+        searchSocket.setIPv4Enabled(true)
+        searchSocket.setIPv6Enabled(true)
+        try searchSocket.bind(toPort: 0)
+        try searchSocket.beginReceiving()
+
         self.types = types
         self.multicastSocket = multicastSocket
+        self.searchSocket = searchSocket
     }
-    
+
     func stopDiscovery() {
-        guard let multicastSocket = multicastSocket else { return }
-        
-        multicastSocket.close()
-        self.multicastSocket = nil
+        guard multicastSocket != nil || searchSocket != nil else { return }
+
+        multicastSocket?.close()
+        multicastSocket = nil
+
+        searchSocket?.close()
+        searchSocket = nil
+
         types = []
     }
-    
-    func searchRequest() {
-        guard let multicastSocket = multicastSocket else { return }
 
+    func searchRequest() {
+        guard let searchSocket = searchSocket else { return }
+
+        // Send the M-SEARCH for every type towards the multicast group on port 1900.
+        // Only the source port differs from the listening socket: responses come back
+        // to this socket's ephemeral port.
         for type in types {
             if let data = self.searchRequestData(forType: type) {
-                multicastSocket.send(data, toHost: multicastGroupAddress, port: multicastUDPPort, withTimeout: 3, tag: type.hashValue)
+                searchSocket.send(data, toHost: multicastGroupAddress, port: multicastUDPPort, withTimeout: 3, tag: type.hashValue)
             }
         }
     }
