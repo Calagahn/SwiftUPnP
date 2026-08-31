@@ -73,11 +73,17 @@ class SSDPCocoaAsyncSocketDiscovery: SSDPDiscovery {
     func stopDiscovery() {
         guard multicastSocket != nil || searchSocket != nil else { return }
 
-        multicastSocket?.close()
+        // Nil out the properties *before* closing, so that the `udpSocketDidClose`
+        // callback triggered by `close()` no longer recognises the socket as one of
+        // ours (=== check fails) and treats the close as intentional teardown,
+        // breaking any close → stopDiscovery recursion.
+        let multicast = multicastSocket
+        let search = searchSocket
         multicastSocket = nil
-
-        searchSocket?.close()
         searchSocket = nil
+
+        multicast?.close()
+        search?.close()
 
         types = []
     }
@@ -98,14 +104,28 @@ class SSDPCocoaAsyncSocketDiscovery: SSDPDiscovery {
 
 extension SSDPCocoaAsyncSocketDiscovery: GCDAsyncUdpSocketDelegate {
     public func udpSocket(_ sock: GCDAsyncUdpSocket, didNotSendDataWithTag tag: Int, dueToError error: Error?) {
-        stopDiscovery()
+        // A failed M-SEARCH send is transient and must not tear down discovery:
+        // doing so would also close the multicast socket and drop passive NOTIFY
+        // reception. Log and carry on; the send can be retried on the next search.
+        Logger.swiftUPnP.error("Failed to send M-SEARCH (tag \(tag)): \(error?.localizedDescription ?? "unknown error")")
     }
-    
+
     public func udpSocketDidClose(_ sock: GCDAsyncUdpSocket, withError error: Error?) {
+        // Only react to an *unexpected* close. During stopDiscovery() we set the
+        // socket properties to nil before/around closing, so a close that no longer
+        // corresponds to one of our live sockets is part of intentional teardown and
+        // is ignored — this also prevents a close→stopDiscovery→close recursion.
+        guard sock === multicastSocket || sock === searchSocket else { return }
+
+        if let error = error {
+            Logger.swiftUPnP.error("SSDP socket closed unexpectedly: \(error.localizedDescription)")
+        }
         stopDiscovery()
     }
-    
+
     public func udpSocket(_ sock: GCDAsyncUdpSocket, didReceive data: Data, fromAddress address: Data, withFilterContext filterContext: Any?) {
+        // Both sockets share this delegate: multicast NOTIFY messages and unicast
+        // search responses are parsed identically by processData.
         processData(data)
     }
 }
